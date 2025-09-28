@@ -16,19 +16,12 @@
 import json
 import flask
 import logging
-import smtplib
+import socket
 
-from dci import dci_config
 from dci.api.v1 import base
 from dci.common import exceptions as dci_exc
 from dci.common import utils
 from dci.db import models2
-
-
-try:
-    from email.MIMEText import MIMEText
-except ImportError:
-    from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
@@ -138,27 +131,19 @@ def get_emails_from_remoteci(remoteci_id):
         return []
 
 
-def send_events(events):
-    flask.g.sender.send_json(events)
-
-
 def _handle_job_event(job):
-    events = []
     emails = get_emails_from_remoteci(job["remoteci_id"])
     job_event = get_job_event(job, emails)
     if job_event:
-        events.append(job_event)
+        publish_on_controlserver(job_event)
 
     dlrn_event = dlrn(job)
     if dlrn_event:
-        events.append(dlrn_event)
+        publish_on_controlserver(dlrn_event)
 
     umb_job_finished_event = build_job_finished_umb_event(job)
     if umb_job_finished_event:
-        events.append(umb_job_finished_event)
-
-    if events:
-        send_events(events)
+        publish_on_controlserver(umb_job_finished_event)
 
 
 def get_emails_from_topic(topic_id):
@@ -192,7 +177,7 @@ def _handle_component_event(component):
     emails = get_emails_from_topic(component["topic_id"])
     component_event = get_component_event(component, emails)
     if component_event:
-        send_events([component_event])
+        publish_on_controlserver(component_event)
 
 
 def job_dispatcher(job):
@@ -203,28 +188,15 @@ def component_dispatcher(component):
     _handle_component_event(component)
 
 
-def publish(payload):
-    return flask.g.messaging.publish(payload)
-
-
-def send_alert_mail(subject, message):
-    def _send_mail():
-        email_server = dci_config.CONFIG["DCI_EMAIL_SERVER"]
-        port = dci_config.CONFIG["DCI_EMAIL_SERVER_PORT"]
-        account = dci_config.CONFIG["DCI_FROM_EMAIL"]
-        smtp_server = smtplib.SMTP(email_server, port)
-        use_tls = dci_config.CONFIG["DCI_EMAIL_USE_TLS"]
-        if use_tls:
-            smtp_server.starttls()
-
-        email = MIMEText(message)
-        email["From"] = "Distributed-CI Notification <%s>" % account
-        email["subject"] = subject
-        email["To"] = dci_config.CONFIG["DCI_ALERT_EMAIL"]
-        smtp_server.sendmail(email["From"], email["To"], email.as_string())
-        smtp_server.quit()
-
+def publish_on_analytics(message):
     try:
-        _send_mail()
-    except Exception:
-        logger.exception("error while sending notification mail")
+        flask.g.messaging.publish_on_analytics(message)
+    except (OSError, socket.gaierror, Exception) as e:
+        logger.error("error while trying to publish a message: %s", str(e))
+
+
+def publish_on_controlserver(self, message):
+    try:
+        flask.g.messaging.publish_on_controlserver(message)
+    except (OSError, socket.gaierror, Exception) as e:
+        logger.error("error while trying to publish a message: %s", str(e))

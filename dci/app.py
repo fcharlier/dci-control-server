@@ -28,8 +28,6 @@ import logging
 import socket
 import sys
 import time
-import zmq
-
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.orm import sessionmaker
 
@@ -42,8 +40,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-zmq_sender = None
-
 
 class DciControlServer(flask.Flask):
     def __init__(self):
@@ -51,7 +47,6 @@ class DciControlServer(flask.Flask):
         self.config.update(dci_config.CONFIG)
         self.url_map.strict_slashes = False
         self.engine = dci_config.get_engine(self.config["SQLALCHEMY_DATABASE_URI"])
-        self.sender = self._get_zmq_sender(self.config["ZMQ_CONN"])
         self.store = dci_config.get_store()
         self.messaging = KombuProducer()
         self.redis_client = RedisClient(self.config.get("DCI_REDIS_URL"))
@@ -60,13 +55,6 @@ class DciControlServer(flask.Flask):
         self.team_redhat_id = self._get_team_id(session, "Red Hat")
         self.team_epm_id = self._get_team_id(session, "EPM")
         session.close()
-
-    def _get_zmq_sender(self, zmq_conn):
-        global zmq_sender
-        if not zmq_sender:
-            zmq_sender = zmq.Context().socket(zmq.PUSH)
-            zmq_sender.connect(zmq_conn)
-        return zmq_sender
 
     def make_default_options_response(self):
         resp = super(DciControlServer, self).make_default_options_response()
@@ -98,48 +86,49 @@ class DciControlServer(flask.Flask):
 class KombuProducer:
     def __init__(self):
         super(KombuProducer, self).__init__()
-        self._connection = kombu.Connection(
-            dci_config.CONFIG["AMQP_BROKER_URL"],
-            transport_options={"confirm_publish": True},
+        self._connection = kombu.Connection(dci_config.CONFIG["AMQP_BROKER_URL"])
+        self._exchange_analytics = kombu.Exchange(
+            "dci.analytics.exchange", type="direct"
         )
-        self._exchange = kombu.Exchange("dci.analytics.exchange", type="direct")
-        self._queue = kombu.Queue(
+        self._exchange_controlserver = kombu.Exchange(
+            "dci.controlserver.exchange", type="direct"
+        )
+        self._queue_analytics = kombu.Queue(
             name="dci.analytics.queue",
-            exchange=self._exchange,
+            exchange=self._exchange_analytics,
             routing_key="dci.analytics.jobs",
         )
-        self._producer = None
+        self._queue_controlserver = kombu.Queue(
+            name="dci.controlserver.queue",
+            exchange=self._exchange_controlserver,
+            routing_key="dci.controlserver.events",
+        )
+        self._producer_analytics = None
+        self._producer_control_server = None
 
-    def _error_mail(self, exc):
+    def publish_on_analytics(self, message):
+        if not self._producer_analytics:
+            channel = self._connection.channel()
+            self._producer_analytics = kombu.Producer(channel=channel, serializer="json")
 
-        return f"""
-You are receiving this email because the DCI control server failed to send a message to RabbitMQ.
+        return self._producer_analytics.publish(
+            message,
+            exchange="dci.analytics.exchange",
+            routing_key="dci.analytics.jobs",
+            declare=[self._exchange_analytics, self._queue_analytics],
+        )
 
-Exception traceback:
+    def publish_on_controlserver(self, message):
+        if not self._producer_control_server:
+            channel = self._connection.channel()
+            self._producer_control_server = kombu.Producer(channel=channel, serializer="json")
 
-{exc}
-
-"""
-
-    def publish(self, message):
-        try:
-            if not self._producer:
-                channel = self._connection.channel()
-                self._producer = kombu.Producer(
-                    exchange=self._exchange,
-                    channel=channel,
-                    routing_key="dci.analytics.jobs",
-                )
-                self._queue.maybe_bind(self._connection)
-                self._queue.declare()
-            return self._producer.publish(message)
-        except (OSError, socket.gaierror, Exception) as e:
-            _msg = self._error_mail(str(e))
-            notifications.send_alert_mail(
-                subject="RabbitMQ transport error",
-                message=_msg,
-            )
-            logger.exception("error while trying to publish a message.")
+        return self._producer_control_server.publish(
+            message,
+            exchange="dci.controlserver.exchange",
+            routing_key="dci.controlserver.events",
+            declare=[self._exchange_controlserver, self._queue_controlserver],
+        )
 
 
 def configure_root_logger():
@@ -205,7 +194,6 @@ def create_app(param=None):
                 time.sleep(1)
                 pass
         flask.g.store = dci_app.store
-        flask.g.sender = dci_app.sender
         flask.g.redis_client = dci_app.redis_client
 
     @dci_app.teardown_request
