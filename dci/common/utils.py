@@ -82,6 +82,10 @@ def gen_etag():
     return md5.hexdigest()
 
 
+def get_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 def check_and_get_etag(headers):
     if_match_etag = headers.get("If-Match")
     if not if_match_etag:

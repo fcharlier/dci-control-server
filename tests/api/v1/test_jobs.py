@@ -694,7 +694,9 @@ def test_get_jobstates_by_job_id_by_epm(client_epm, client_admin, team1_job_id):
     assert len(jobstates.data["job"]["jobstates"]) == len(found_jobstate_ids)
 
 
-def test_get_jobstates_by_job_id_with_embed(client_admin, team1_job_id, team1_jobstate):
+def test_get_jobstates_by_job_id_with_embed(
+    client_admin, team1_job_id, team1_jobstate_id
+):
     with mock.patch(AWSS3, spec=S3) as mock_s3:
         mockito = mock.MagicMock()
 
@@ -706,12 +708,12 @@ def test_get_jobstates_by_job_id_with_embed(client_admin, team1_job_id, team1_jo
 
         mockito.head.return_value = head_result
         mock_s3.return_value = mockito
-        headers = {"DCI-JOBSTATE-ID": team1_jobstate, "DCI-NAME": "name1"}
+        headers = {"DCI-JOBSTATE-ID": team1_jobstate_id, "DCI-NAME": "name1"}
         pfile = client_admin.post(
             "/api/v1/files", headers=headers, data="kikoolol"
         ).data
         file1_id = pfile["file"]["id"]
-        headers = {"DCI-JOBSTATE-ID": team1_jobstate, "DCI-NAME": "name2"}
+        headers = {"DCI-JOBSTATE-ID": team1_jobstate_id, "DCI-NAME": "name2"}
         pfile = client_admin.post(
             "/api/v1/files", headers=headers, data="kikoolol"
         ).data
@@ -913,14 +915,22 @@ def test_create_file_for_job_id(
         assert file["file"]["name"] == "foobar"
 
 
-def test_get_files_by_job_id(client_user1, team1_job_id, team1_job_file):
+def test_get_files_by_job_id(client_user1, team1_job_id, team1_job_file_id):
     # get files from job
     file_from_job = client_user1.get("/api/v1/jobs/%s/files" % team1_job_id)
     assert file_from_job.status_code == 200
     assert file_from_job.data["_meta"]["count"] == 1
 
 
-def test_get_files_by_job_id_as_epm(client_epm, team1_job_id, team1_job_file):
+def test_get_files_by_job_id_return_jobstate_file(
+    client_user1, team1_job_id, team1_job_file_id, team1_jobstate_file_id
+):
+    file_from_job = client_user1.get("/api/v1/jobs/%s/files" % team1_job_id)
+    assert file_from_job.status_code == 200
+    assert file_from_job.data["_meta"]["count"] == 2
+
+
+def test_get_files_by_job_id_as_epm(client_epm, team1_job_id, team1_job_file_id):
     # get files from job
     file_from_job = client_epm.get("/api/v1/jobs/%s/files" % team1_job_id)
     assert file_from_job.status_code == 200
@@ -1096,3 +1106,16 @@ def test_nrt_get_jobs_not_contains_tags(
     jobs_nottag2_ids = [j["id"] for j in jobs_nottag2]
     assert job_id_1 in jobs_nottag2_ids
     assert job_id_2 not in jobs_nottag2_ids
+
+
+def test_list_jobstates_return_files_and_tasks_with_files_key(
+    client_user1, team1_job_id, team1_jobstate_file_id, team1_jobstate_task_id
+):
+    list_jobstates = client_user1.get(f"/api/v1/jobs/{team1_job_id}/jobstates")
+    assert list_jobstates.status_code == 200
+
+    jobstates = list_jobstates.data["jobstates"]
+    files = jobstates[0]["files"]
+    assert len(files) == 2
+    for file in files:
+        assert file["id"] in [team1_jobstate_file_id, team1_jobstate_task_id]

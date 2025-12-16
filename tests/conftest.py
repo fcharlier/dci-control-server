@@ -23,6 +23,7 @@ import tests.sso_tokens as sso_tokens
 from passlib.apps import custom_app_context as pwd_context
 import contextlib
 import pytest
+import requests
 import sqlalchemy_utils.functions
 from sqlalchemy.orm import sessionmaker
 
@@ -401,15 +402,15 @@ def team1_job_id(team1_job):
 
 
 @pytest.fixture
-def team1_jobstate(client_user1, team1_job_id):
+def team1_jobstate_id(client_user1, team1_job_id):
     data = {"job_id": team1_job_id, "status": "running", "comment": "kikoolol"}
     jobstate = client_user1.post("/api/v1/jobstates", data=data).data
     return jobstate["jobstate"]["id"]
 
 
 @pytest.fixture
-def team1_jobstate_file(client_user1, team1_jobstate, team1_id):
-    headers = {"DCI-JOBSTATE-ID": team1_jobstate, "DCI-NAME": "name"}
+def team1_jobstate_file_id(client_user1, team1_jobstate_id, team1_id):
+    headers = {"DCI-JOBSTATE-ID": team1_jobstate_id, "DCI-NAME": "name"}
     file = client_user1.post("/api/v1/files", headers=headers, data="kikoolol").data
     headers["team_id"] = team1_id
     headers["id"] = file["file"]["id"]
@@ -417,12 +418,35 @@ def team1_jobstate_file(client_user1, team1_jobstate, team1_id):
 
 
 @pytest.fixture
-def team1_job_file(client_user1, team1_job_id, team1_id):
+def team1_job_file_id(client_user1, team1_job_id, team1_id):
     headers = {"DCI-JOB-ID": team1_job_id, "DCI-NAME": "name"}
     file = client_user1.post("/api/v1/files", headers=headers, data="foobar").data
     headers["team_id"] = team1_id
     headers["id"] = file["file"]["id"]
     return file["file"]["id"]
+
+
+@pytest.fixture
+def team1_jobstate_task_id(client_user1, team1_jobstate_id):
+    create_task = client_user1.post(
+        "/api/v2/tasks",
+        data={
+            "name": "TASK: [ Print DCI test] **************************************",
+            "jobstate_id": team1_jobstate_id,
+            "duration": 123,
+            "status": "completed",
+        },
+    )
+    assert create_task.status_code == 201
+    task = create_task.data["task"]
+
+    upload_url = task["upload_url"]
+    content = 'ok: [127.0.0.1] => { "msg": "DCI test" }'
+
+    upload_task_content = requests.put(upload_url, data=content)
+    assert upload_task_content.status_code == 200
+
+    return client_user1.get("/api/v2/tasks/%s" % task["id"]).data["task"]["id"]
 
 
 # Products, topic, components

@@ -48,6 +48,7 @@ def get_store():
         "containers": {
             "files": CONFIG["STORE_FILES_CONTAINER"],
             "components": CONFIG["STORE_COMPONENTS_CONTAINER"],
+            "tasks": CONFIG["STORE_TASKS_CONTAINER"],
         }
     }
     if CONFIG["STORE_ENGINE"] == CONFIG["S3_STORE"]:
@@ -58,6 +59,7 @@ def get_store():
         configuration["aws_region"] = CONFIG["STORE_S3_AWS_REGION"]
         configuration["endpoint_url"] = CONFIG.get("STORE_S3_ENDPOINT_URL")
         configuration["signature_version"] = CONFIG.get("STORE_S3_SIGNATURE_VERSION")
+        configuration["buckets"] = list(configuration["containers"].values())
         return s3.S3(configuration)
     else:
         configuration["path"] = CONFIG["STORE_FILE_PATH"]

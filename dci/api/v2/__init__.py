@@ -36,3 +36,5 @@ def index():
 
 import dci.api.v2.components  # noqa
 import dci.api.v2.files  # noqa
+import dci.api.v2.jobs  # noqa
+import dci.api.v2.tasks  # noqa
