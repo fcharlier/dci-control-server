@@ -18,6 +18,7 @@
 from gevent import monkey
 
 monkey.patch_all()
+import gevent
 import psycogreen.gevent
 
 # import gevent
@@ -95,6 +96,15 @@ class DciControlServer(flask.Flask):
             )
             sys.exit(1)
         return team.id
+
+
+class BackgroundKombuProducer:
+    def publish(self, message):
+        gevent.spawn(self._publish, message)
+
+    def _publish(self, message):
+        kombuproducer = KombuProducer()
+        kombuproducer.publish(message)
 
 
 class KombuProducer:
@@ -192,7 +202,7 @@ def create_app(param=None):
         flask.g.team_admin_id = dci_app.team_admin_id
         flask.g.team_redhat_id = dci_app.team_redhat_id
         flask.g.team_epm_id = dci_app.team_epm_id
-        flask.g.messaging = KombuProducer()
+        flask.g.messaging = BackgroundKombuProducer()
 
         for i in range(5):
             try:
